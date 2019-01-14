@@ -11,8 +11,6 @@
  *  Description:
  *
  ****************************************************************************/
-#ifndef __OB_DEPTH_ENGINE_MX6500_RING_BUFFER_H__
-#define __OB_DEPTH_ENGINE_MX6500_RING_BUFFER_H__
 
 #include <stddef.h>
 
@@ -82,6 +80,3 @@ void *ring_buf_deque(ring_buf_t *rbuf);
 #ifdef __cplusplus
 }
 #endif
-
-
-#endif //__OB_DEPTH_ENGINE_MX6500_CIRCLE_BUFFER_H__

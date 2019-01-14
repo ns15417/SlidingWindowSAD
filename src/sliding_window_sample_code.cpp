@@ -14,19 +14,28 @@
  *
  ****************************************************************************/
 
+#include "sliding_window_sample_code.hpp"
 
-typedef struct _SlidingWindowData
+
+DispSlidingWindow::DispSlidingWindow()
 {
-    int rbuf_size;                 // Ring buffer size
-    ring_buf_t *horiz_cost_rbuf;   // horizontal cost ring buffer
 
-    int line_sad_align_offset;     // 行 SAD 对齐偏移（两边各自的扩展量）
-    int line_sad_step;             // 行 SAD 的步长，为了方便求亚像素做了扩展，步长为 disp_range_ + 2*line_sad_align_offset
-    int line_sad_nelem;            // 行 SAD 总的大小
-    uint16_t *curr_line_sad;       // 当前行的sad，维度为[width][disp_range + 2*line_sad_align_offset]
-} SlidingWindowData;
+}
+DispSlidingWindow::~DispSlidingWindow()
+{
 
-
+}
+void DispSlidingWindow::setParams(int block_size, int min_disp,
+                    int disp_range,int width, int height, int max_disp)
+{
+    block_size_ = block_size;
+    min_disp_ = min_disp;
+    half_blk_sz_ = block_size/2;
+    disp_range_ = disp_range;
+    width_ = width;
+    height_ = height;
+    max_disp_ = max_disp;
+}
 /**
  * 这个函数只摘抄了部分
  * @param helper
@@ -35,7 +44,7 @@ typedef struct _SlidingWindowData
 int DispSlidingWindow::AllocHorizSADRingBuf(SlidingWindowData *helper) const
 {
     // 分配水平方向SAD循环缓冲区
-    helper->rbuf_size = block_size_;
+    helper->rbuf_size = DispSlidingWindow::block_size_;
     helper->horiz_cost_rbuf = ring_buf_new(helper->rbuf_size);
 
     HorizWinRangeSAD *h_win_sad = NULL;
@@ -99,79 +108,12 @@ void UpdateHorizWinRangeSAD(const uint16_t *prev_sad, uint16_t *curr_sad, int di
                             uint8_t tgt_add, const uint8_t *ref_add)
 {
     int d;
-
-#if defined(__AVX2__)
-    __m256i tgt_sub_vec = _mm256_set1_epi8(tgt_sub);    // broadcast
-    __m256i tgt_add_vec = _mm256_set1_epi8(tgt_add);
-    __m256i x1, y1, sub_vec1, add_vec1;
-    __m256i x2, y2, sub_vec2, add_vec2;
-
-    __m256i src1, src2, src3, src4;
-    __m256i tmp1_low, tmp1_high, dst1_low, dst1_high;
-    __m256i tmp2_low, tmp2_high, dst2_low, dst2_high;
-    __m256i zero = _mm256_setzero_si256();
-    __m256i x1_low_u16, x1_high_u16, y1_low_u16, y1_high_u16;
-    __m256i x2_low_u16, x2_high_u16, y2_low_u16, y2_high_u16;
-
-    for (d = 0; d < disp_range / 64; ++d)
-    {
-        //////////////////////////////////////////////////////////////////////////////
-        // round 1
-        x1 = _mm256_loadu_si256((__m256i *) (ref_sub + d * 64));
-        y1 = _mm256_loadu_si256((__m256i *) (ref_add + d * 64));
-        sub_vec1 = _mm256_abs_epi8(_mm256_sub_epi8(tgt_sub_vec, x1));
-        add_vec1 = _mm256_abs_epi8(_mm256_sub_epi8(tgt_add_vec, y1));
-
-        // 交换中间两个64位，方面调用_mm256_unpacklo_epi8/_mm256_unpackhi_epi8
-        sub_vec1 = _mm256_permute4x64_epi64(sub_vec1, 0xD8);
-        add_vec1 = _mm256_permute4x64_epi64(add_vec1, 0xD8);
-
-        src1 = _mm256_loadu_si256((__m256i *) (prev_sad + d * 64));
-        x1_low_u16 = _mm256_unpacklo_epi8(sub_vec1, zero);
-        y1_low_u16 = _mm256_unpacklo_epi8(add_vec1, zero);
-        tmp1_low = _mm256_sub_epi16(src1, x1_low_u16);
-        dst1_low = _mm256_add_epi16(tmp1_low, y1_low_u16);
-        _mm256_storeu_si256((__m256i *) (curr_sad + d * 64), dst1_low);
-
-        src2 = _mm256_loadu_si256((__m256i *) (prev_sad + d * 64 + 16));
-        x1_high_u16 = _mm256_unpackhi_epi8(sub_vec1, zero);
-        y1_high_u16 = _mm256_unpackhi_epi8(add_vec1, zero);
-        tmp1_high = _mm256_sub_epi16(src2, x1_high_u16);
-        dst1_high = _mm256_add_epi16(tmp1_high, y1_high_u16);
-        _mm256_storeu_si256((__m256i *) (curr_sad + d * 64 + 16), dst1_high);
-
-        //////////////////////////////////////////////////////////////////////////////
-        // round 2
-        x2 = _mm256_loadu_si256((__m256i *) (ref_sub + d * 64 + 32));
-        y2 = _mm256_loadu_si256((__m256i *) (ref_add + d * 64 + 32));
-        sub_vec2 = _mm256_abs_epi8(_mm256_sub_epi8(tgt_sub_vec, x2));
-        add_vec2 = _mm256_abs_epi8(_mm256_sub_epi8(tgt_add_vec, y2));
-
-        // 交换中间两个64位，方面调用_mm256_unpacklo_epi8/_mm256_unpackhi_epi8
-        sub_vec2 = _mm256_permute4x64_epi64(sub_vec2, 0xD8);
-        add_vec2 = _mm256_permute4x64_epi64(add_vec2, 0xD8);
-
-        src3 = _mm256_loadu_si256((__m256i *) (prev_sad + d * 64 + 32));
-        x2_low_u16 = _mm256_unpacklo_epi8(sub_vec2, zero);
-        y2_low_u16 = _mm256_unpacklo_epi8(add_vec2, zero);
-        tmp2_low = _mm256_sub_epi16(src3, x2_low_u16);
-        dst2_low = _mm256_add_epi16(tmp2_low, y2_low_u16);
-        _mm256_storeu_si256((__m256i *) (curr_sad + d * 64 + 32), dst2_low);
-
-        src4 = _mm256_loadu_si256((__m256i *) (prev_sad + d * 64 + 48));
-        x2_high_u16 = _mm256_unpackhi_epi8(sub_vec2, zero);
-        y2_high_u16 = _mm256_unpackhi_epi8(add_vec2, zero);
-        tmp2_high = _mm256_sub_epi16(src4, x2_high_u16);
-        dst2_high = _mm256_add_epi16(tmp2_high, y2_high_u16);
-        _mm256_storeu_si256((__m256i *) (curr_sad + d * 64 + 48), dst2_high);
-    }
-#else
     // TODO: 改成向量化的方式
     for (d = 0; d < disp_range; ++d)
     {
         curr_sad[d] = prev_sad[d] - (uint16_t) abs(tgt_sub - ref_sub[d]) + (uint16_t) abs(tgt_add - ref_add[d]);
     }
-#endif
+
 }
 
 /**
@@ -183,48 +125,11 @@ void UpdateHorizWinRangeSAD(const uint16_t *prev_sad, uint16_t *curr_sad, int di
 void VectorSubUInt16(uint16_t *minuend, const uint16_t *subtrahend, int16_t len)
 {
     int i;
-#if defined(__AVX2__)
-    __m256i x0, x1, x2, x3;
-    __m256i y0, y1, y2, y3;
-    __m256i z0, z1, z2, z3;
 
-    for (i = 0; i < len / 64; ++i)
-    {
-        x0 = _mm256_loadu_si256((__m256i *) (minuend + i * 64));
-        y0 = _mm256_loadu_si256((__m256i *) (subtrahend + i * 64));
-        z0 = _mm256_sub_epi16(x0, y0);
-        _mm256_storeu_si256((__m256i *) (minuend + i * 64), z0);
-
-        x1 = _mm256_loadu_si256((__m256i *) (minuend + i * 64 + 16));
-        y1 = _mm256_loadu_si256((__m256i *) (subtrahend + i * 64 + 16));
-        z1 = _mm256_sub_epi16(x1, y1);
-        _mm256_storeu_si256((__m256i *) (minuend + i * 64 + 16), z1);
-
-        x2 = _mm256_loadu_si256((__m256i *) (minuend + i * 64 + 32));
-        y2 = _mm256_loadu_si256((__m256i *) (subtrahend + i * 64 + 32));
-        z2 = _mm256_sub_epi16(x2, y2);
-        _mm256_storeu_si256((__m256i *) (minuend + i * 64 + 32), z2);
-
-        x3 = _mm256_loadu_si256((__m256i *) (minuend + i * 64 + 48));
-        y3 = _mm256_loadu_si256((__m256i *) (subtrahend + i * 64 + 48));
-        z3 = _mm256_sub_epi16(x3, y3);
-        _mm256_storeu_si256((__m256i *) (minuend + i * 64 + 48), z3);
-    }
-#elif defined(__SSE__) || _M_IX86_FP >= 1
-    __m128i x, y, z;
-
-    for (i = 0; i < len/8; ++i)
-    {
-        x = _mm_loadu_si128((__m128i*)(minuend + i * 8));
-        y = _mm_loadu_si128((__m128i*)(subtrahend + i * 8));
-        z = _mm_sub_epi16(x, y);
-        _mm_storeu_si128((__m128i*)(minuend + i * 8), z);
-    }
-#else
     // TODO: 改成向量化的方式
     for (i = 0; i < len; ++i)
         minuend[i] -= subtrahend[i];
-#endif
+
 }
 
 
@@ -240,124 +145,6 @@ void VectorAddFindMinUInt16(const uint16_t *src, uint16_t *tgt, int16_t num, int
 {
     int16_t i;
 
-#if defined(__AVX2__)
-
-    __m256i x0, x1, x2, x3;
-    __m256i y0, y1, y2, y3;
-    __m256i z0, z1, z2, z3;
-    __m256i vmin0, vmin1, vmin2, vmin3;
-    __m256i vcmp0, vcmp1, vcmp2, vcmp3;
-    uint32_t mask[4];
-#ifdef _MSC_VER
-    unsigned long idx[4];	// _BitScanForward(unsigned long * Index, unsigned long Mask)
-#else
-    uint8_t idx[4];
-#endif
-    uint16_t minval[4];
-
-    int16_t min_idx_ = 0;
-    uint16_t min_val_ = UINT16_MAX;
-    // 16 × 16 bits = 256 bits，展开4级
-    for (i = 0; i < num / 64; ++i)
-    {
-        x0 = _mm256_loadu_si256((__m256i *) (tgt + i * 64));
-        y0 = _mm256_loadu_si256((__m256i *) (src + i * 64));
-        z0 = _mm256_add_epi16(x0, y0);
-        _mm256_storeu_si256((__m256i *) (tgt + i * 64), z0);
-
-        x1 = _mm256_loadu_si256((__m256i *) (tgt + i * 64 + 16));
-        y1 = _mm256_loadu_si256((__m256i *) (src + i * 64 + 16));
-        z1 = _mm256_add_epi16(x1, y1);
-        _mm256_storeu_si256((__m256i *) (tgt + i * 64 + 16), z1);
-
-        x2 = _mm256_loadu_si256((__m256i *) (tgt + i * 64 + 32));
-        y2 = _mm256_loadu_si256((__m256i *) (src + i * 64 + 32));
-        z2 = _mm256_add_epi16(x2, y2);
-        _mm256_storeu_si256((__m256i *) (tgt + i * 64 + 32), z2);
-
-        x3 = _mm256_loadu_si256((__m256i *) (tgt + i * 64 + 48));
-        y3 = _mm256_loadu_si256((__m256i *) (src + i * 64 + 48));
-        z3 = _mm256_add_epi16(x3, y3);
-        _mm256_storeu_si256((__m256i *) (tgt + i * 64 + 48), z3);
-
-        // 求最小值
-        vmin0 = _mm256_min_epu16(z0, _mm256_alignr_epi8(z0, z0, 2));
-        vmin1 = _mm256_min_epu16(z1, _mm256_alignr_epi8(z1, z1, 2));
-        vmin2 = _mm256_min_epu16(z2, _mm256_alignr_epi8(z2, z2, 2));
-        vmin3 = _mm256_min_epu16(z3, _mm256_alignr_epi8(z3, z3, 2));
-
-        vmin0 = _mm256_min_epu16(vmin0, _mm256_alignr_epi8(vmin0, vmin0, 4));
-        vmin1 = _mm256_min_epu16(vmin1, _mm256_alignr_epi8(vmin1, vmin1, 4));
-        vmin2 = _mm256_min_epu16(vmin2, _mm256_alignr_epi8(vmin2, vmin2, 4));
-        vmin3 = _mm256_min_epu16(vmin3, _mm256_alignr_epi8(vmin3, vmin3, 4));
-
-        vmin0 = _mm256_min_epu16(vmin0, _mm256_alignr_epi8(vmin0, vmin0, 8));
-        vmin1 = _mm256_min_epu16(vmin1, _mm256_alignr_epi8(vmin1, vmin1, 8));
-        vmin2 = _mm256_min_epu16(vmin2, _mm256_alignr_epi8(vmin2, vmin2, 8));
-        vmin3 = _mm256_min_epu16(vmin3, _mm256_alignr_epi8(vmin3, vmin3, 8));
-
-        vmin0 = _mm256_min_epu16(vmin0, _mm256_permute2x128_si256(vmin0, vmin0, 0x01));
-        vmin1 = _mm256_min_epu16(vmin1, _mm256_permute2x128_si256(vmin1, vmin1, 0x01));
-        vmin2 = _mm256_min_epu16(vmin2, _mm256_permute2x128_si256(vmin2, vmin2, 0x01));
-        vmin3 = _mm256_min_epu16(vmin3, _mm256_permute2x128_si256(vmin3, vmin3, 0x01));
-
-        vcmp0 = _mm256_cmpeq_epi16(z0, vmin0);  // 比较是否相等
-        vcmp1 = _mm256_cmpeq_epi16(z1, vmin1);
-        vcmp2 = _mm256_cmpeq_epi16(z2, vmin2);
-        vcmp3 = _mm256_cmpeq_epi16(z3, vmin3);
-
-        mask[0] = (uint32_t) _mm256_movemask_epi8(vcmp0); // 取每个8bit的最高有效位，组成一个mask
-        mask[1] = (uint32_t) _mm256_movemask_epi8(vcmp1);
-        mask[2] = (uint32_t) _mm256_movemask_epi8(vcmp2);
-        mask[3] = (uint32_t) _mm256_movemask_epi8(vcmp3);
-
-#if defined(__GNUC__)
-        idx[0] = __builtin_ctz(mask[0]) >> 1; // 每两个字节
-        idx[1] = __builtin_ctz(mask[1]) >> 1;
-        idx[2] = __builtin_ctz(mask[2]) >> 1;
-        idx[3] = __builtin_ctz(mask[3]) >> 1;
-#elif defined(_MSC_VER)
-        // 一定会有一个非0，所以这里不检查_BitScanForward()返回值
-        _BitScanForward(idx, mask[0]);
-        idx[0] >>= 1;
-        _BitScanForward(idx + 1, mask[1]);
-        idx[1] >>= 1;
-        _BitScanForward(idx + 2, mask[2]);
-        idx[2] >>= 1;
-        _BitScanForward(idx + 3, mask[3]);
-        idx[3] >>= 1;
-#endif
-
-        minval[0] = (uint16_t) _mm256_extract_epi16(vmin0, 0);  // 最后全是相同的值
-        if (minval[0] < min_val_)
-        {
-            min_val_ = minval[0];
-            min_idx_ = (int16_t) (idx[0] + i * 64);
-        }
-        minval[1] = (uint16_t) _mm256_extract_epi16(vmin1, 0);
-        if (minval[1] < min_val_)
-        {
-            min_val_ = minval[1];
-            min_idx_ = (int16_t) (idx[1] + 16 + i * 64);
-        }
-        minval[2] = (uint16_t) _mm256_extract_epi16(vmin2, 0);
-        if (minval[2] < min_val_)
-        {
-            min_val_ = minval[2];
-            min_idx_ = (int16_t) (idx[2] + 32 + i * 64);
-        }
-        minval[3] = (uint16_t) _mm256_extract_epi16(vmin3, 0);
-        if (minval[3] < min_val_)
-        {
-            min_val_ = minval[3];
-            min_idx_ = (int16_t) (idx[3] + 48 + i * 64);
-        }
-    }
-
-    *min_idx = min_idx_;
-    *min_val = min_val_;
-
-#else
     tgt[0] += src[0];
     *min_idx = 0;
     *min_val = tgt[0];
@@ -427,7 +214,8 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
     const uint8_t *blk_tgt_ptr = NULL;
     const uint8_t *blk_ref_ptr = NULL;
 
-    int extend_offset = std::max(0, min_disp_ - half_blk_sz_);
+    //int extend_offset = std::min(0, min_disp_ - half_blk_sz_);
+    int extend_offset = 129;
 
     // 清零SAD向量
     memset(curr_line_sad, 0, sizeof(curr_line_sad[0]) * line_sad_nelem);
@@ -445,11 +233,12 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
         h_win_range_sads = (HorizWinRangeSAD *) ring_buf_deque(horiz_cost_rbuf);
         assert(h_win_range_sads);
 
-        blk_ref_ptr = ref_ptr + extend_offset;
-        blk_tgt_ptr = tgt_ptr + extend_offset + max_disp_;
+        blk_ref_ptr = ref_ptr;
+        blk_tgt_ptr = tgt_ptr + 127;
 
         // 启动行内SAD的计算：最开始的 @sliding_blk_sz_ 个长为 @disp_range_ 的AbsDiff向量相加
         memset(h_win_range_sads->sad_buffer, 0, sizeof(h_win_range_sads->sad_buffer[0]) * disp_range_);
+        //计算第一个元素的256视差的代价
         for (int i = 0; i < block_size_; ++i)
         {
             const uint8_t *ref_disp_range = blk_ref_ptr;
@@ -462,10 +251,11 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
             blk_tgt_ptr++;
             blk_ref_ptr++;
         }
+        //更新第一个元素的列
         UpdateVeritalAccumExtSAD(h_win_range_sads->sad_buffer + col * disp_range_,
                                  curr_line_sad + col * line_sad_step, disp_range_,
                                  &disp_ignore, &cost_ignore);
-
+        //计算第一行其余元素的256个视差的代价
         for (col = 1; col < width_; ++col)
         {
             // 移到下一列时，更新h_win_range_sads
@@ -494,21 +284,24 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
     for (int r = 0; r < height_; ++r)
     {
         col = 0;
-        h_win_range_sads = (HorizWinRangeSAD *) ring_buf_deque(horiz_cost_rbuf);
+        h_win_range_sads = (HorizWinRangeSAD *) ring_buf_deque(horiz_cost_rbuf); //取出第一行
         assert(h_win_range_sads);
 
-        blk_ref_ptr = ref_ptr + extend_offset;
-        blk_tgt_ptr = tgt_ptr + extend_offset + max_disp_;
+        //blk_ref_ptr = ref_ptr + extend_offset;
+        //blk_tgt_ptr = tgt_ptr + extend_offset + max_disp_;
+        blk_ref_ptr = ref_ptr;
+        blk_tgt_ptr = tgt_ptr + 127;
 
         ///////////////////////////////////////////////////////////////////////
         // 减去被移出匹配窗口的行，这是与启动阶段的差别
         // curr_line_sad = prev_line_sad - (last) h_win_range_sads
         VectorSubUInt16(curr_line_sad + 0 * line_sad_step + line_sad_align_offset,
-                        h_win_range_sads->sad_buffer + 0, disp_range_);
+                        h_win_range_sads->sad_buffer + 0, disp_range_);  //减去第一行的第一个元素
         ///////////////////////////////////////////////////////////////////////
 
         // 启动行内SAD的计算：最开始的 @sliding_blk_sz_ 个长为 @disp_range_ 的AbsDiff向量相加
         memset(h_win_range_sads->sad_buffer, 0, sizeof(h_win_range_sads->sad_buffer[0]) * disp_range_);
+        //计算新一行的第一个元素的横向SAD
         for (int i = 0; i < block_size_; ++i)
         {
             const uint8_t *ref_disp_range = blk_ref_ptr;
@@ -521,18 +314,18 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
             blk_tgt_ptr++;
             blk_ref_ptr++;
         }
-
+        //计算新一行的第一个元素的总SAD
         UpdateVeritalAccumExtSAD(h_win_range_sads->sad_buffer + col * disp_range_,
                                  curr_line_sad + col * line_sad_step, disp_range_,
-                                 disp_ptr + col, cost_ptr + col);
-
+                                 disp_ptr + col, cost_ptr + col);  //加上新计算出来的行sad,即为总的SAD
+        //计算新一行的其余元素的SAD
         for (col = 1; col < width_; ++col)
         {
             ///////////////////////////////////////////////////////////////////
             // 减去被移出匹配窗口的行，这是与启动阶段的差别
             // curr_line_sad = prev_line_sad - (last) h_win_range_sads
             VectorSubUInt16(curr_line_sad + col * line_sad_step + line_sad_align_offset,
-                            h_win_range_sads->sad_buffer + col * disp_range_, disp_range_);
+                            h_win_range_sads->sad_buffer + col * disp_range_, disp_range_);  //需要减去原来行
             ///////////////////////////////////////////////////////////////////
 
             // 移到下一列时，更新h_win_range_sads
