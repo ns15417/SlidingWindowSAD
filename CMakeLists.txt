@@ -6,15 +6,9 @@ SET(CMAKE_BUILD_TYPE Debug  )
 set(CMAKE_CXX_STANDARD 11)
 
 
-
-
-#增加Boost的依赖
-find_package(Boost REQUIRED)
-
 # 添加头文件和库文件
-include_directories(
-        ${Boost_INCLUDE_DIRS}
-)
+include_directories("D:/Program Files/boost_1_65_1")
+set(Boost_LIBRARY_DIRS "D:/Program Files/boost_1_65_1/lib64-msvc-14.0")
 LINK_DIRECTORIES(
         ${Boost_LIBRARY_DIRS}
 )

@@ -170,6 +170,7 @@ void VectorAddFindMinUInt16(const uint16_t *src, uint16_t *tgt, int16_t num, int
  * @param[out] min_cost      最小代价
  *
  */
+
 void
 UpdateVeritalAccumExtSAD(const uint16_t *hwin_sad, uint16_t *ext_sad, int16_t disp_range,
                          int16_t *disp, uint16_t *min_cost)
@@ -233,19 +234,24 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
         h_win_range_sads = (HorizWinRangeSAD *) ring_buf_deque(horiz_cost_rbuf);
         assert(h_win_range_sads);
 
+    
+
         blk_ref_ptr = ref_ptr;
         blk_tgt_ptr = tgt_ptr + 127;
 
         // 启动行内SAD的计算：最开始的 @sliding_blk_sz_ 个长为 @disp_range_ 的AbsDiff向量相加
         memset(h_win_range_sads->sad_buffer, 0, sizeof(h_win_range_sads->sad_buffer[0]) * disp_range_);
-        //计算第一个元素的256视差的代价
+              
         for (int i = 0; i < block_size_; ++i)
         {
+            //   blk_ref_ptr     参考图像中第r行的第i个像素
+            //   blk_tgt_ptr     目标图像中的第r行第i个像素
+            //   ref_disp_range  移动视差d后的第i个元素
             const uint8_t *ref_disp_range = blk_ref_ptr;
             // TODO: 修改成向量化操作
             for (int d = 0; d < disp_range_; ++d)
             {
-                h_win_range_sads->sad_buffer[d] += abs(*blk_tgt_ptr - *ref_disp_range++);
+                h_win_range_sads->sad_buffer[d] += abs(*blk_tgt_ptr - *ref_disp_range++);    //计算第i个元素的256视差的代价
             }
 
             blk_tgt_ptr++;
@@ -255,7 +261,7 @@ int DispSlidingWindow::SlidingWindowMatch(DEImageU8 ext_tgt, DEImageU8 ext_ref, 
         UpdateVeritalAccumExtSAD(h_win_range_sads->sad_buffer + col * disp_range_,
                                  curr_line_sad + col * line_sad_step, disp_range_,
                                  &disp_ignore, &cost_ignore);
-        //计算第一行其余元素的256个视差的代价
+        //计算第一行其余元素的256个视差的代价，这里开始，就可以利用滑窗法
         for (col = 1; col < width_; ++col)
         {
             // 移到下一列时，更新h_win_range_sads

@@ -38,7 +38,7 @@ int main(int argc, char* argv[])
         copyMakeBorder(rightimage, refimage,2,2,129,130, BORDER_CONSTANT, Scalar(0));
 
         imwrite("leftimage.png",tgtimage);
-        imwrite("rightimage.png",tgtimage);
+        imwrite("rightimage.png",refimage);
 
         DispSlidingWindow  dispSlidingWindow;
 
@@ -46,12 +46,12 @@ int main(int argc, char* argv[])
         dispSlidingWindow.setParams(block_size, min_disp,
                     disp_range, width, height, max_disp);
 
-        
+        //初始化扩展后的目标图
         DEImageU8 ext_tgt;
         ext_tgt.height = tgtimage.rows;
         ext_tgt.width = tgtimage.cols;
         ext_tgt.data = tgtimage.data;
-
+        //初始化扩展后的参考图
         DEImageU8 ext_ref;
         ext_ref.height = refimage.rows;
         ext_ref.width = refimage.cols;
@@ -60,13 +60,13 @@ int main(int argc, char* argv[])
 
         int cols = leftimage.cols;
         int rows = leftimage.rows;
-
+        //初始化视差图（与原图像同大小）
         Mat dispImg(rows,cols, CV_16SC1,Scalar(0));
         DEImageS16 disp;
         disp.height = dispImg.rows;
         disp.width = dispImg.cols;
         disp.data = dispImg.ptr<int16_t>();
-        
+        //初始化代价图（与原图像同大小）
         Mat costImg(rows,cols, CV_16UC1,Scalar(0));
         DEImageU16 cost;
         cost.height = costImg.rows;
